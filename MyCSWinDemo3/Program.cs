@@ -1,38 +1,67 @@
 ﻿using CSWinWasapiDemo;
-using System.Runtime.InteropServices;
-using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.Media.Audio;
-using Windows.Win32.System.Com;
 
 
 public static class Program
 {
-    [DllImport("ole32.dll")]
-    private static extern int CoCreateFreeThreadedMarshaler(
-       IntPtr pUnkOuter,
-       [MarshalAs(UnmanagedType.IUnknown)] out object ppUnkMarshaler);
-
-    [MTAThread]
-    public static void Main(string[] args)
+    //[MTAThread]
+    [STAThread]
+    public static async Task Main(string[] args)
     {
-        var propkeylut = new PropKeyLut();
-
         var probedDevices = AudioOut.ProbeDevices();
         var defaultDeviceId = AudioOut.DefaultDeviceId();
-        //var supported = AudioOut.ProbeFormat(defaultDeviceId!);
-        var supported = AudioOut.ProbeFormat(probedDevices[1].Id, AudioOut.ShareMode.Exclusive, 192000, 2, AudioOut.SampleFormat.Fmt24BitsIn32Bits);
+
+        if (defaultDeviceId == null)
+        {
+            throw new Exception("no default audio device found");
+        }
+
+        var player = new AudioOut(
+            defaultDeviceId,
+            new AudioOut.AudioConfig
+            {
+                Frequency = 48000,
+                Channels = 2,
+                Format = AudioOut.SampleFormat.FmtFloat
+            },
+            AudioOut.ShareMode.Shared
+        );
+
+        float phase = 0;
+        float advance = (240 * MathF.Tau / 48000);
+
+        player.StereoFloat32Render = chunk =>
+        {
+            for (int s = 0; s < chunk.Length; s++)
+            {
+                chunk[s].Left = 0f;
+                chunk[s].Right = 0.01f * MathF.Sin(phase);
+                phase += advance;
+                if (phase > MathF.Tau) { phase -= MathF.Tau; }
+            }
+        };
+
+        await player.Start();
+        Console.ReadLine();
+        await player.Stop();
+#if NEVER
+        [DllImport("ole32.dll")]
+        private static extern int CoCreateFreeThreadedMarshaler(
+          IntPtr pUnkOuter,
+          [MarshalAs(UnmanagedType.IUnknown)] out object ppUnkMarshaler);
+        object freeThreadedMarshaler;
+        // Aggregate the free-threaded marshaler
+        CoCreateFreeThreadedMarshaler(IntPtr.Zero, out freeThreadedMarshaler);
+
+        var propkeylut = new PropKeyLut();
+
+        //cts.Cancel();
+        //await playerTask;
 
         // see https://github.com/naudio/NAudio/blob/master/NAudio.Wasapi/CoreAudioApi/AudioClient.cs
 
         // Initialize COM
         unsafe
         {
-            PInvoke.CoInitializeEx(COINIT.COINIT_MULTITHREADED);
-
-            object freeThreadedMarshaler;
-            // Aggregate the free-threaded marshaler
-            CoCreateFreeThreadedMarshaler(IntPtr.Zero, out freeThreadedMarshaler);
 
             // Create the device enumerator
             //var enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(Type.GetTypeFromCLSID());
@@ -254,62 +283,6 @@ public static class Program
             Console.WriteLine("Hello, World!");
             Thread.Sleep(1000);
         }
-    }
-}
-
-
-//[GeneratedComClass]
-[ComVisible(true)]
-public partial class MyActivationHandler : IActivateAudioInterfaceCompletionHandler, IAgileObject
-{
-
-    public MyActivationHandler()
-    {
-    }
-
-    void IActivateAudioInterfaceCompletionHandler.ActivateCompleted(IActivateAudioInterfaceAsyncOperation activateOperation)
-    {
-        // First get the activation results, and see if anything bad happened then
-        activateOperation.GetActivateResult(out var hr, out object unk);
-        if (hr != 0)
-        {
-            Console.WriteLine("ActivateCompleted failed");
-            Marshal.ThrowExceptionForHR(hr, new IntPtr(-1));
-            //tcs.TrySetException(Marshal.GetExceptionForHR(hr, new IntPtr(-1)));
-            return;
-        }
-        Console.WriteLine("ActivateCompleted called");
-    }
-
-}
-
-//MediaDevice
-
-#if NEVER
-{
-  "include": [
-    "IAudioClient",
-    "IAudioRenderClient",
-    "IAudioCaptureClient",
-    "IAudioClock",
-    "IAudioClock2",
-    "IAudioStreamVolume",
-    "IAudioSessionControl",
-    "IAudioSessionControl2",
-    "IAudioSessionManager",
-    "IAudioSessionManager2",
-    "IMMDevice",
-    "IMMDeviceEnumerator",
-    "IMMDeviceCollection",
-    "IMMNotificationClient",
-    "WAVEFORMATEX",
-    "WAVEFORMATEXTENSIBLE",
-    "AUDCLNT_SHAREMODE",
-    "AUDCLNT_BUFFERFLAGS",
-    "AUDCLNT_STREAMFLAGS"
-  ],
-  "emitSingleFile": false,
-  "allowMarshaling": true,
-  "wideCharOnly": true
-}
 #endif
+    }
+}

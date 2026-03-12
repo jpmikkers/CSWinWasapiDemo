@@ -1,5 +1,6 @@
 ﻿namespace CSWinWasapiDemo;
 
+using Baksteen.Waves;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Windows.Win32;
@@ -10,8 +11,28 @@ using Windows.Win32.Media.Multimedia;
 using Windows.Win32.System.Com;
 using Windows.Win32.UI.Shell.PropertiesSystem;
 
+
+
 public class AudioOut
 {
+    private readonly MtaTaskScheduler _scheduler;
+    private readonly TaskFactory _taskFactory;
+    private readonly AudioDeviceId _audioDeviceId;
+    private readonly AudioConfig _audioConfig;
+    private readonly ShareMode _shareMode;
+
+    private ComScope<IMMDevice>? _device;
+    private ComScope<IAudioClient3>? _audioClient;
+    private ComScope<IAudioRenderClient>? _renderClient;
+    private Task? _renderTask;
+    private ManualResetEvent? _audioEvent;
+    private CancellationTokenSource? _cts;
+
+    public Action<Span<SampleMono16>>? Mono16Render { get; set; }
+    public Action<Span<SampleStereo16>>? Stereo16Render { get; set; }
+    public Action<Span<SampleMonoFloat32>>? MonoFloat32Render { get; set; }
+    public Action<Span<SampleStereoFloat32>>? StereoFloat32Render { get; set; }
+
     public enum ShareMode
     {
         Shared,
@@ -25,11 +46,18 @@ public class AudioOut
         FmtFloat,
     }
 
-    private static WAVEFORMATEXTENSIBLE CreateWaveFormatExtensible(uint samplefrequency, ushort channels, SampleFormat sampleFormat)
+    public record AudioConfig
+    {
+        public uint Frequency { get; set; }
+        public ushort Channels { get; set; }
+        public SampleFormat Format { get; set; }
+    }
+
+    private static WAVEFORMATEXTENSIBLE CreateWaveFormatExtensible(AudioConfig audioConfig)
     {
         WAVEFORMATEXTENSIBLE format;
 
-        switch (sampleFormat)
+        switch (audioConfig.Format)
         {
             //case SampleFormat.FmtShort:
             //    format = new WAVEFORMATEXTENSIBLE
@@ -52,8 +80,8 @@ public class AudioOut
                     Format = new WAVEFORMATEX
                     {
                         cbSize = (ushort)(Marshal.SizeOf<WAVEFORMATEXTENSIBLE>() - Marshal.SizeOf<WAVEFORMATEX>()),
-                        nChannels = channels,
-                        nSamplesPerSec = samplefrequency,
+                        nChannels = audioConfig.Channels,
+                        nSamplesPerSec = audioConfig.Frequency,
                         wFormatTag = (ushort)PInvoke.WAVE_FORMAT_EXTENSIBLE,
                     },
                     SubFormat = typeof(KSDATAFORMAT_SUBTYPE_PCM).GUID,
@@ -68,8 +96,8 @@ public class AudioOut
                     Format = new WAVEFORMATEX
                     {
                         cbSize = (ushort)(Marshal.SizeOf<WAVEFORMATEXTENSIBLE>() - Marshal.SizeOf<WAVEFORMATEX>()),
-                        nChannels = channels,
-                        nSamplesPerSec = samplefrequency,
+                        nChannels = audioConfig.Channels,
+                        nSamplesPerSec = audioConfig.Frequency,
                         wFormatTag = (ushort)PInvoke.WAVE_FORMAT_EXTENSIBLE,
                     },
                     SubFormat = typeof(KSDATAFORMAT_SUBTYPE_PCM).GUID,
@@ -84,8 +112,8 @@ public class AudioOut
                     Format = new WAVEFORMATEX
                     {
                         cbSize = (ushort)(Marshal.SizeOf<WAVEFORMATEXTENSIBLE>() - Marshal.SizeOf<WAVEFORMATEX>()),
-                        nChannels = channels,
-                        nSamplesPerSec = samplefrequency,
+                        nChannels = audioConfig.Channels,
+                        nSamplesPerSec = audioConfig.Frequency,
                         wFormatTag = (ushort)PInvoke.WAVE_FORMAT_EXTENSIBLE,
                     },
                     SubFormat = typeof(KSDATAFORMAT_SUBTYPE_IEEE_FLOAT).GUID,
@@ -111,10 +139,19 @@ public class AudioOut
         return format;
     }
 
-
-    public AudioOut()
+    public AudioOut(AudioDeviceId audioDeviceId, AudioConfig audioConfig, ShareMode shareMode)
     {
+        _audioDeviceId = audioDeviceId;
+        _audioConfig = audioConfig;
+        _shareMode = shareMode;
 
+        _scheduler = new MtaTaskScheduler(2);
+
+        _taskFactory = new TaskFactory(
+            CancellationToken.None,
+            TaskCreationOptions.DenyChildAttach,
+            TaskContinuationOptions.ExecuteSynchronously,
+            _scheduler);
     }
 
     private static AUDCLNT_SHAREMODE ToNative(ShareMode shareMode)
@@ -154,7 +191,7 @@ public class AudioOut
         return null;
     }
 
-    public static bool ProbeFormat(AudioDeviceId audioDeviceId, ShareMode shareMode, uint sampleRate, ushort numChannels, SampleFormat sampleFormat)
+    public static bool ProbeFormat(AudioDeviceId audioDeviceId, AudioConfig audioConfig, ShareMode shareMode)
     {
         using var device = GetDevice(audioDeviceId);
 
@@ -165,7 +202,7 @@ public class AudioOut
             if (audioClient != null)
             {
                 using var scopedAudioClient = ComScope<IAudioClient3>.Create((IAudioClient3)audioClient);
-                var format = CreateWaveFormatExtensible(sampleRate, numChannels, sampleFormat);
+                var format = CreateWaveFormatExtensible(audioConfig);
                 HRESULT hresult = scopedAudioClient.Value.MyIsFormatSupported(ToNative(shareMode), format, out var closestMatch);
                 return hresult == 0;
             }
@@ -224,5 +261,197 @@ public class AudioOut
             }
         }
         return result;
+    }
+
+    private async Task InitTask()
+    {
+        _device = AudioOut.GetDevice(_audioDeviceId);
+
+        if (_device == null)
+        {
+            throw new ArgumentOutOfRangeException("deviceid");
+        }
+
+        _device.Value.Activate(typeof(IAudioClient3).GUID, CLSCTX.CLSCTX_ALL, null, out var tAudioClient);
+        _audioClient = ComScope<IAudioClient3>.Create((IAudioClient3)tAudioClient);
+
+        var format = CreateWaveFormatExtensible(_audioConfig);
+        //audioClient.Value.GetMixFormat(out var pwfx);
+
+        // Now you can use wfxExt.Format, wfxExt.ChannelMask, wfxExt.SubFormat, etc.
+        //audioClient.Initialize(AUDCLNT_SHAREMODE.AUDCLNT_SHAREMODE_SHARED, PInvoke.AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | PInvoke.AUDCLNT_STREAMFLAGS_EVENTCALLBACK, TimeSpan.FromSeconds(0.1).Ticks, 0, wfx, Guid.NewGuid());
+        //MyExt.Initialize(audioClient, AUDCLNT_SHAREMODE.AUDCLNT_SHAREMODE_SHARED, PInvoke.AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | PInvoke.AUDCLNT_STREAMFLAGS_EVENTCALLBACK, TimeSpan.FromSeconds(0.1).Ticks, 0, wfxExt, Guid.NewGuid());
+        MyExt.Initialize(
+            _audioClient.Value,
+            ToNative(_shareMode),
+            PInvoke.AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+            TimeSpan.FromSeconds(0.1).Ticks,
+            0,
+            format,
+            Guid.NewGuid());
+
+        _audioClient.Value.GetService(typeof(IAudioRenderClient).GUID, out var tRenderClient);
+        _renderClient = ComScope<IAudioRenderClient>.Create((IAudioRenderClient)tRenderClient);
+
+        //audioClient.SetEventHandle(CreateEvent(null, false, false, null));
+        _audioEvent = new ManualResetEvent(false);
+        //var ttt = new ManualResetEventSlim(false);
+
+        _audioClient.Value.SetEventHandle((HANDLE)_audioEvent.SafeWaitHandle.DangerousGetHandle());
+        _audioClient.Value.Start();
+
+        _cts = new CancellationTokenSource();
+        _renderTask = _taskFactory.StartNew(async () => RenderTask(_cts.Token));
+    }
+
+    private async Task RenderTask(CancellationToken ct)
+    {
+        if (_audioClient == null || _renderClient == null || _audioEvent == null) return;
+
+        _audioClient.Value.GetBufferSize(out var numBufferFrames);
+        _audioClient.Value.GetStreamLatency(out var streamLatency);
+
+        while (!ct.IsCancellationRequested)
+        {
+            //Console.WriteLine($"Before: I am on thread {Thread.CurrentThread.ManagedThreadId}");
+            //await WaitOneAsync(audioEvent, ct);
+            //Console.WriteLine($"After: I am on thread {Thread.CurrentThread.ManagedThreadId}");
+
+            _audioEvent.WaitOne();
+            _audioEvent.Reset();
+
+            bool done = false;
+            int frameCount = 0;
+
+            while (!done && !ct.IsCancellationRequested)
+            {
+                try
+                {
+                    _audioClient.Value.GetCurrentPadding(out var numPaddingFrames);
+
+                    uint framesToWrite = Math.Min(100, numBufferFrames - numPaddingFrames);
+                    //Console.WriteLine($"to write {framesToWrite}");
+
+                    unsafe
+                    {
+                        if (framesToWrite > 0)
+                        {
+                            _renderClient.Value.GetBuffer(framesToWrite, out var pData);
+
+                            try
+                            {
+                                switch (_audioConfig.Format)
+                                {
+                                    case SampleFormat.FmtShort when _audioConfig.Channels == 1:
+                                        {
+                                            var span = new Span<SampleMono16>(pData, (int)framesToWrite);
+                                            Mono16Render?.Invoke(span);
+                                        }
+                                        break;
+
+                                    case SampleFormat.FmtShort when _audioConfig.Channels == 2:
+                                        {
+                                            var span = new Span<SampleStereo16>(pData, (int)framesToWrite);
+                                            Stereo16Render?.Invoke(span);
+                                        }
+                                        break;
+
+                                    case SampleFormat.Fmt24BitsIn32Bits when _audioConfig.Channels == 1:
+                                        // TODO
+                                        break;
+
+                                    case SampleFormat.Fmt24BitsIn32Bits when _audioConfig.Channels == 2:
+                                        // TODO
+                                        break;
+
+                                    case SampleFormat.FmtFloat when _audioConfig.Channels == 1:
+                                        {
+                                            var span = new Span<SampleMonoFloat32>(pData, (int)framesToWrite);
+                                            MonoFloat32Render?.Invoke(span);
+                                        }
+                                        break;
+
+                                    case SampleFormat.FmtFloat when _audioConfig.Channels == 2:
+                                        {
+                                            var span = new Span<SampleStereoFloat32>(pData, (int)framesToWrite);
+                                            StereoFloat32Render?.Invoke(span);
+                                        }
+                                        break;
+
+                                    default:
+                                        break;
+                                }
+                            }
+                            finally
+                            {
+                                _renderClient.Value.ReleaseBuffer(framesToWrite, 0);
+                            }
+                        }
+                        else
+                        {
+                            done = true;
+                        }
+
+                        frameCount += (int)framesToWrite;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    done = true;
+                }
+            }
+        }
+
+        //audioClient.
+        _audioClient.Value.Stop();
+    }
+
+    public async Task Start()
+    {
+        await _taskFactory.StartNew(async () =>
+        {
+            // Why ConfigureAwait(false) is essential
+            // Without it, tries to resume on a SynchronizationContect (if present).
+            // With it, resumes on the current TaskScheduler, which is your MTA scheduler.
+            await InitTask().ConfigureAwait(false);
+        });
+    }
+
+    public async Task Stop()
+    {
+        await _taskFactory.StartNew(async () =>
+        {
+            if (_cts != null)
+            {
+                _cts.Cancel();
+                _cts = null;
+            }
+
+            if (_renderTask != null)
+            {
+                _audioEvent?.Set();                         // make sure the render thread doesn't get stuck on the event wait
+                await _renderTask.ConfigureAwait(false);    // todo this might throw?
+                _renderTask = null;
+            }
+
+            if (_audioClient != null)
+            {
+                _audioClient.Value.Stop();
+                _audioClient.Dispose();
+                _audioClient = null;
+            }
+
+            if (_renderClient != null)
+            {
+                _renderClient.Dispose();
+                _renderClient = null;
+            }
+
+            if (_device != null)
+            {
+                _device.Dispose();
+                _device = null;
+            }
+        });
     }
 }
