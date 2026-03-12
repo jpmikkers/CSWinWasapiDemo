@@ -28,10 +28,10 @@ public class AudioOut
     private ManualResetEvent? _audioEvent;
     private CancellationTokenSource? _cts;
 
-    public Action<Span<SampleMono16>>? Mono16Render { get; set; }
-    public Action<Span<SampleStereo16>>? Stereo16Render { get; set; }
-    public Action<Span<SampleMonoFloat32>>? MonoFloat32Render { get; set; }
-    public Action<Span<SampleStereoFloat32>>? StereoFloat32Render { get; set; }
+    public Action<Span<SampleShortMono>>? Mono16Render { get; set; }
+    public Action<Span<SampleShortStereo>>? Stereo16Render { get; set; }
+    public Action<Span<SampleFloatMono>>? MonoFloat32Render { get; set; }
+    public Action<Span<SampleFloatStereo>>? StereoFloat32Render { get; set; }
 
     public enum ShareMode
     {
@@ -344,14 +344,14 @@ public class AudioOut
                                 {
                                     case SampleFormat.FmtShort when _audioConfig.Channels == 1:
                                         {
-                                            var span = new Span<SampleMono16>(pData, (int)framesToWrite);
+                                            var span = new Span<SampleShortMono>(pData, (int)framesToWrite);
                                             Mono16Render?.Invoke(span);
                                         }
                                         break;
 
                                     case SampleFormat.FmtShort when _audioConfig.Channels == 2:
                                         {
-                                            var span = new Span<SampleStereo16>(pData, (int)framesToWrite);
+                                            var span = new Span<SampleShortStereo>(pData, (int)framesToWrite);
                                             Stereo16Render?.Invoke(span);
                                         }
                                         break;
@@ -366,14 +366,14 @@ public class AudioOut
 
                                     case SampleFormat.FmtFloat when _audioConfig.Channels == 1:
                                         {
-                                            var span = new Span<SampleMonoFloat32>(pData, (int)framesToWrite);
+                                            var span = new Span<SampleFloatMono>(pData, (int)framesToWrite);
                                             MonoFloat32Render?.Invoke(span);
                                         }
                                         break;
 
                                     case SampleFormat.FmtFloat when _audioConfig.Channels == 2:
                                         {
-                                            var span = new Span<SampleStereoFloat32>(pData, (int)framesToWrite);
+                                            var span = new Span<SampleFloatStereo>(pData, (int)framesToWrite);
                                             StereoFloat32Render?.Invoke(span);
                                         }
                                         break;

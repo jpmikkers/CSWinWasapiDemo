@@ -3,7 +3,8 @@
 using System.Runtime.InteropServices;
 
 [StructLayout(LayoutKind.Sequential, Pack = 0)]
-public struct SampleMono8
+public struct SampleShortStereo
 {
-    public sbyte Mono;
+    public short Left;
+    public short Right;
 }
