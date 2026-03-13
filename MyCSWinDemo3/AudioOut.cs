@@ -11,8 +11,6 @@ using Windows.Win32.Media.Multimedia;
 using Windows.Win32.System.Com;
 using Windows.Win32.UI.Shell.PropertiesSystem;
 
-
-
 public class AudioOut
 {
     private readonly MtaTaskScheduler _scheduler;
@@ -406,20 +404,29 @@ public class AudioOut
         _audioClient.Value.Stop();
     }
 
+    private async Task RunMTA(Func<Task> action)
+    {
+        try
+        {
+            await _taskFactory.StartNew(async () =>
+            {
+                await action().ConfigureAwait(false);
+            }).Unwrap();
+        }
+        catch (COMException ex)
+        {
+            throw new Exception(ErrorLut.TranslateHRESULT((HRESULT)ex.ErrorCode), ex);
+        }
+    }
+
     public async Task Start()
     {
-        await _taskFactory.StartNew(async () =>
-        {
-            // Why ConfigureAwait(false) is essential
-            // Without it, tries to resume on a SynchronizationContect (if present).
-            // With it, resumes on the current TaskScheduler, which is your MTA scheduler.
-            await InitTask().ConfigureAwait(false);
-        });
+        await RunMTA(InitTask);
     }
 
     public async Task Stop()
     {
-        await _taskFactory.StartNew(async () =>
+        await RunMTA(async () =>
         {
             if (_cts != null)
             {
