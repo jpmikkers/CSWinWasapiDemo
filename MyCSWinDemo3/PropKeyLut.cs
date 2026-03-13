@@ -4,6 +4,7 @@ using System.Reflection;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 
+
 internal class PropKeyLut
 {
     private record MYPROPERTYKEY

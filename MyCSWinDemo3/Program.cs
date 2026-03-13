@@ -16,7 +16,7 @@ public static class Program
             defaultDeviceId,
             new AudioOut.AudioConfig
             {
-                Frequency = 48000,
+                Frequency = 49000,
                 Channels = 2,
                 Format = AudioOut.SampleFormat.FmtFloat
             },
@@ -26,13 +26,18 @@ public static class Program
         float phase = 0;
         float advance = (240 * MathF.Tau / 48000);
 
+        float slowphase = 0;
+        float slowadvance = (1f * MathF.Tau / 48000);
+
         player.StereoFloat32Render = chunk =>
         {
             for (int s = 0; s < chunk.Length; s++)
             {
                 chunk[s].Left = 0.1f * MathF.Sin(phase);
                 chunk[s].Right = 0.1f * MathF.Sin(phase);
-                phase = (phase + advance) % MathF.Tau;
+
+                slowphase = (slowphase + slowadvance) % MathF.Tau;
+                phase = (phase + advance * (0.9f + 0.1f * MathF.Sin(slowphase))) % MathF.Tau;
             }
         };
 
