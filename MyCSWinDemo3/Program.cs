@@ -16,7 +16,7 @@ public static class Program
             defaultDeviceId,
             new AudioOut.AudioConfig
             {
-                Frequency = 48000,
+                Frequency = 49000,
                 Channels = 2,
                 Format = AudioOut.SampleFormat.FmtFloat
             },
