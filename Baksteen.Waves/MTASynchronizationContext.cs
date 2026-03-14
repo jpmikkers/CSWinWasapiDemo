@@ -1,4 +1,4 @@
-﻿namespace CSWinWasapiDemo;
+﻿namespace Baksteen.Waves;
 
 public sealed class MtaSynchronizationContext : SynchronizationContext
 {

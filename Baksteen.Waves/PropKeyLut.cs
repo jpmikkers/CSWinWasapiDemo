@@ -1,4 +1,4 @@
-﻿namespace CSWinWasapiDemo;
+﻿namespace Baksteen.Waves;
 
 using System.Reflection;
 using Windows.Win32;

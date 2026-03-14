@@ -1,4 +1,4 @@
-﻿namespace CSWinWasapiDemo;
+﻿namespace Baksteen.Waves;
 
 using System;
 using System.Runtime.InteropServices;

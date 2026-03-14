@@ -1,6 +1,5 @@
-﻿namespace CSWinWasapiDemo;
+﻿namespace Baksteen.Waves;
 
-using Baksteen.Waves;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Windows.Win32;
@@ -29,7 +28,7 @@ public class AudioOut
     public Action<Span<SampleShortMono>>? Mono16Render { get; set; }
     public Action<Span<SampleShortStereo>>? Stereo16Render { get; set; }
     public Action<Span<SampleFloatMono>>? MonoFloat32Render { get; set; }
-    public Action<Span<SampleFloatStereo>>? StereoFloat32Render { get; set; }
+    public Action<Span<SampleFloatStereo>>? StereoFloatRender { get; set; }
 
     public enum ShareMode
     {
@@ -372,7 +371,7 @@ public class AudioOut
                                     case SampleFormat.FmtFloat when _audioConfig.Channels == 2:
                                         {
                                             var span = new Span<SampleFloatStereo>(pData, (int)framesToWrite);
-                                            StereoFloat32Render?.Invoke(span);
+                                            StereoFloatRender?.Invoke(span);
                                         }
                                         break;
 

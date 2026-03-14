@@ -1,10 +1,11 @@
-﻿using CSWinWasapiDemo;
+﻿namespace WaveOutDemo;
 
-public static class Program
+using Baksteen.Waves;
+
+class Program
 {
-    public static async Task Main(string[] args)
+    static async Task Main(string[] args)
     {
-        var probedDevices = AudioOut.ProbeDevices();
         var defaultDeviceId = AudioOut.DefaultDeviceId();
 
         if (defaultDeviceId == null)
@@ -23,26 +24,26 @@ public static class Program
             AudioOut.ShareMode.Shared
         );
 
-        float phase = 0;
-        float advance = (240 * MathF.Tau / 48000);
+        var organ = new Organ(48000, 8);
+        player.StereoFloatRender = organ.Render;
+        var keyScanner = new KeyScanner();
+        var keyPiano = new KeyPiano();
 
-        float slowphase = 0;
-        float slowadvance = (1f * MathF.Tau / 48000);
-
-        player.StereoFloat32Render = chunk =>
-        {
-            for (int s = 0; s < chunk.Length; s++)
-            {
-                chunk[s].Left = 0.1f * MathF.Sin(phase);
-                chunk[s].Right = 0.1f * MathF.Sin(phase);
-
-                slowphase = (slowphase + slowadvance) % MathF.Tau;
-                phase = (phase + advance * (0.9f + 0.1f * MathF.Sin(slowphase))) % MathF.Tau;
-            }
-        };
+        Console.WriteLine("play the organ!. Press escape to quit.");
 
         await player.Start();
-        Console.ReadLine();
+
+        while (true)
+        {
+            var scanEvents = keyScanner.Scan();
+            if (scanEvents.Any(x => x.Key == KeyScanner.VirtualKey.ESCAPE)) break;
+            foreach (var noteEvent in keyPiano.ToNoteEvents(scanEvents))
+            {
+                organ.QueueNoteEvent(noteEvent.note, noteEvent.isOn);
+            }
+            await Task.Delay(10);
+        }
+
         await player.Stop();
     }
 }
